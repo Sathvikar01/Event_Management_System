@@ -208,6 +208,7 @@ INSERT INTO `volunteers` (`Volunteer_id`, `Name`, `Email`, `Contact`, `Type`, `E
 INSERT INTO `volunteers` (`Volunteer_id`, `Name`, `Email`, `Contact`, `Type`, `Event_id`) VALUES (206, 'Araham', 'araham@gmail.com', '9852014562', 'Security', 105);
 
 -- Routine: FN_GetAvailableCapacity
+DELIMITER $$
 CREATE DEFINER=`root`@`localhost` FUNCTION `FN_GetAvailableCapacity`(p_event_id INT) RETURNS int
     READS SQL DATA
 BEGIN
@@ -223,9 +224,11 @@ BEGIN
     WHERE Event_id = p_event_id AND Status = 'Confirmed';
     
     RETURN v_capacity - v_tickets_sold;
-END
+END$$
+DELIMITER ;
 
 -- Routine: SP_ConfirmPayment
+DELIMITER $$
 CREATE DEFINER=`root`@`localhost` PROCEDURE `SP_ConfirmPayment`(
     IN p_ticket_id INT,
     IN p_payment_method VARCHAR(50),
@@ -240,9 +243,11 @@ BEGIN
     WHERE Ticket_id = p_ticket_id;
 
     SELECT CONCAT('Ticket ', p_ticket_id, ' confirmed and payment recorded.') AS StatusMessage;
-END
+END$$
+DELIMITER ;
 
 -- Trigger: TR_CheckCapacityBeforeSale
+DELIMITER $$
 CREATE DEFINER=`root`@`localhost` TRIGGER `TR_CheckCapacityBeforeSale` BEFORE INSERT ON `ticket` FOR EACH ROW BEGIN
     DECLARE v_available_capacity INT;
     SET v_available_capacity = FN_GetAvailableCapacity(NEW.Event_id);
@@ -251,9 +256,11 @@ CREATE DEFINER=`root`@`localhost` TRIGGER `TR_CheckCapacityBeforeSale` BEFORE IN
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'Cannot sell ticket: Event capacity is full.';
     END IF;
-END
+END$$
+DELIMITER ;
 
 -- Routine: FN_GetTotalConfirmedTickets
+DELIMITER $$
 CREATE DEFINER=`root`@`localhost` FUNCTION `FN_GetTotalConfirmedTickets`(p_event_id INT) RETURNS int
     READS SQL DATA
 BEGIN
@@ -265,9 +272,11 @@ BEGIN
     WHERE Event_id = p_event_id AND Status = 'Confirmed';
 
     RETURN confirmed_count;
-END
+END$$
+DELIMITER ;
 
 -- Routine: SP_MarkTicketAsPending
+DELIMITER $$
 CREATE DEFINER=`root`@`localhost` PROCEDURE `SP_MarkTicketAsPending`(
     IN p_ticket_id INT
 )
@@ -276,9 +285,11 @@ BEGIN
     SET Status = 'Pending'
     WHERE Ticket_id = p_ticket_id;
     SELECT CONCAT('Ticket ', p_ticket_id, ' status set to Pending.') AS StatusMessage;
-END
+END$$
+DELIMITER ;
 
 -- Routine: SP_GetEventSummary
+DELIMITER $$
 CREATE DEFINER=`root`@`localhost` PROCEDURE `SP_GetEventSummary`(
     IN p_event_id INT
 )
@@ -293,9 +304,11 @@ BEGIN
         Venue V ON E.Venue_id = V.Venue_id
     WHERE
         E.Event_id = p_event_id;
-END
+END$$
+DELIMITER ;
 
 -- Routine: FN_GetOrganizerName (Fixed from FN_CetOrganizerName typo)
+DELIMITER $$
 CREATE DEFINER=`root`@`localhost` FUNCTION `FN_GetOrganizerName`(p_organizer_id INT) RETURNS varchar(100) CHARSET utf8mb4
     READS SQL DATA
 BEGIN
@@ -305,18 +318,23 @@ BEGIN
     FROM Organizer
     WHERE Organizer_id = p_organizer_id;
     RETURN organizer_name;
-END
+END$$
+DELIMITER ;
 
 -- Trigger: TR_CheckTicketPrice (Fixed FOR EACH ROW and SQLSTATE)
+DELIMITER $$
 CREATE DEFINER=`root`@`localhost` TRIGGER `TR_CheckTicketPrice` BEFORE INSERT ON `ticket` FOR EACH ROW BEGIN
     IF NEW.Price <= 0.00 THEN
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'Ticket price must be greater than zero.';
     END IF;
-END
+END$$
+DELIMITER ;
 
 -- Trigger: TR_UpdateVolunteerOnEventDelete (Fixed FOR EACH ROW)
+DELIMITER $$
 CREATE DEFINER=`root`@`localhost` TRIGGER `TR_UpdateVolunteerOnEventDelete` AFTER DELETE ON `event` FOR EACH ROW BEGIN
     INSERT INTO Log (Log_Message)
     VALUES (CONCAT('Event ', OLD.Event_id, ' {', OLD.Name, '} was deleted. Volunteers may need re-assignment.'));
-END
+END$$
+DELIMITER ;
