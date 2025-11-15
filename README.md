@@ -1,4 +1,4 @@
-<img width="933" height="122" alt="image" src="https://github.com/user-attachments/assets/c7ac3091-755c-4a2f-92a4-e35cd3d6739b" /># Event Management System
+# Event Management System
 
 A comprehensive desktop application for managing events, participants, tickets, payments, and more using Python and MySQL.
 
