@@ -1,0 +1,9 @@
+# Copy this file to db_config.py and fill in your credentials
+DB_CONFIG = {
+    'host': 'localhost',
+    'database': 'Event_Management_DB',
+    'user': 'root',
+    'password': 'your_password'
+}
+
+# For security, add db_config.py to your .gitignore so credentials are not committed.

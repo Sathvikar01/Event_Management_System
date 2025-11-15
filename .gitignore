@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.vscode/
+.env
+.env.*
+db_config.py
+# editor files
+*.swp
+*.swo
+.DS_Store
+
+# backups
+*~
