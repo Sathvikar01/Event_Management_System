@@ -237,12 +237,8 @@ This project is for educational purposes.
 
 ## 👥 Contributors
 
-- Event Management Team
+- Sathvik A R - Sathvikar01
+- Saaj Shah 
 
-## 📞 Support
-
-For issues or questions, please create an issue in the repository or contact the development team.
-
----
 
 **Last Updated**: November 2025
