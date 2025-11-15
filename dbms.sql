@@ -1,5 +1,5 @@
 -- Dumped by Event Management App
--- Auto-generated on: 2025-11-11 10:16:39
+-- Auto-generated on: 2025-11-14 14:01:54
 DROP DATABASE IF EXISTS Event_Management_DB;
 CREATE DATABASE Event_Management_DB;
 USE Event_Management_DB;
@@ -36,6 +36,7 @@ CREATE TABLE `event` (
   `Time` time DEFAULT NULL,
   `Venue_id` int NOT NULL,
   `Organizer_id` int NOT NULL,
+  `Price` decimal(10,2) DEFAULT '0.00',
   PRIMARY KEY (`Event_id`),
   KEY `Venue_id` (`Venue_id`),
   KEY `Organizer_id` (`Organizer_id`),
@@ -120,7 +121,7 @@ CREATE TABLE `log` (
   `Log_Message` text,
   `Timestamp` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`Log_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=13 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 -- Dumping data for table organizer
@@ -129,21 +130,6 @@ INSERT INTO `organizer` (`Organizer_id`, `Name`, `Contact`, `Email`) VALUES (2, 
 INSERT INTO `organizer` (`Organizer_id`, `Name`, `Contact`, `Email`) VALUES (3, 'Sports League PES', '7776665554', 'sports@pes.com');
 INSERT INTO `organizer` (`Organizer_id`, `Name`, `Contact`, `Email`) VALUES (4, 'Alumni Network', '9998887776', 'alumni@pes.com');
 INSERT INTO `organizer` (`Organizer_id`, `Name`, `Contact`, `Email`) VALUES (5, 'Student Council', '6004002001', 'council@pes.com');
-
--- Table structure for users (public/login accounts)
-CREATE TABLE `users` (
-    `User_id` int NOT NULL,
-    `Username` varchar(50) NOT NULL,
-    `Password` varchar(255) NOT NULL,
-    `Fullname` varchar(100) DEFAULT NULL,
-    `Email` varchar(100) DEFAULT NULL,
-    `Role` varchar(20) DEFAULT 'user',
-    PRIMARY KEY (`User_id`),
-    UNIQUE KEY `Username` (`Username`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- Sample public user
-INSERT INTO `users` (`User_id`, `Username`, `Password`, `Fullname`, `Email`, `Role`) VALUES (1, 'guest', 'guest', 'Guest User', 'guest@example.com', 'user');
 
 -- Dumping data for table venue
 INSERT INTO `venue` (`Venue_id`, `Name`, `Location`, `Capacity`) VALUES (10, 'Seminar Hall', 'PES Campus, BE Block', 500);
@@ -161,6 +147,8 @@ INSERT INTO `event` (`Event_id`, `Name`, `Type`, `Date`, `Time`, `Venue_id`, `Or
 INSERT INTO `event` (`Event_id`, `Name`, `Type`, `Date`, `Time`, `Venue_id`, `Organizer_id`) VALUES (104, 'DJ Night', 'Party', '2025-12-01', '19:00:00', 14, 5);
 INSERT INTO `event` (`Event_id`, `Name`, `Type`, `Date`, `Time`, `Venue_id`, `Organizer_id`) VALUES (105, 'Future of AI Guest Lecture', 'Guest Lecture', '2025-10-28', '16:00:00', 11, 1);
 INSERT INTO `event` (`Event_id`, `Name`, `Type`, `Date`, `Time`, `Venue_id`, `Organizer_id`) VALUES (110, 'sowk', 'Hackathon', '2025-11-07', '0:00:00', 13, 5);
+INSERT INTO `event` (`Event_id`, `Name`, `Type`, `Date`, `Time`, `Venue_id`, `Organizer_id`) VALUES (1011, 'aka', 'Party', '2025-11-14', '0:00:00', 11, 4);
+INSERT INTO `event` (`Event_id`, `Name`, `Type`, `Date`, `Time`, `Venue_id`, `Organizer_id`) VALUES (1014, 'xse', 'Workshop', '2025-11-13', '0:00:00', 13, 2);
 
 -- Dumping data for table participants
 INSERT INTO `participants` (`Participant_id`, `Name`, `Email`, `Contact`) VALUES (1001, 'Ananya Sharma', 'ananya.s@email.com', '9876543210');
@@ -174,6 +162,7 @@ INSERT INTO `participants` (`Participant_id`, `Name`, `Email`, `Contact`) VALUES
 INSERT INTO `participants` (`Participant_id`, `Name`, `Email`, `Contact`) VALUES (1009, 'arham :)', 'arham@gmail.com', '9874561230');
 INSERT INTO `participants` (`Participant_id`, `Name`, `Email`, `Contact`) VALUES (1010, 'mohith', 'kulla@gmail.com', '8459631235');
 INSERT INTO `participants` (`Participant_id`, `Name`, `Email`, `Contact`) VALUES (1011, 'sankalp', 'sankalp@gmail.com', '9874563210');
+INSERT INTO `participants` (`Participant_id`, `Name`, `Email`, `Contact`) VALUES (1012, 'Guest User', 'guest@example.com', '');
 
 -- Dumping data for table ticket
 INSERT INTO `ticket` (`Ticket_id`, `Event_id`, `Participant_id`, `Status`, `Price`) VALUES (3001, 101, 1001, 'Confirmed', 500.00);
@@ -183,6 +172,11 @@ INSERT INTO `ticket` (`Ticket_id`, `Event_id`, `Participant_id`, `Status`, `Pric
 INSERT INTO `ticket` (`Ticket_id`, `Event_id`, `Participant_id`, `Status`, `Price`) VALUES (3005, 101, 1005, 'Confirmed', 500.00);
 INSERT INTO `ticket` (`Ticket_id`, `Event_id`, `Participant_id`, `Status`, `Price`) VALUES (3006, 102, 1006, 'Cancelled', 100.00);
 INSERT INTO `ticket` (`Ticket_id`, `Event_id`, `Participant_id`, `Status`, `Price`) VALUES (3007, 105, 1009, 'Confirmed', 500.00);
+INSERT INTO `ticket` (`Ticket_id`, `Event_id`, `Participant_id`, `Status`, `Price`) VALUES (3008, 110, 1012, 'Pending', 0.01);
+INSERT INTO `ticket` (`Ticket_id`, `Event_id`, `Participant_id`, `Status`, `Price`) VALUES (3009, 101, 1012, 'Pending', 0.01);
+INSERT INTO `ticket` (`Ticket_id`, `Event_id`, `Participant_id`, `Status`, `Price`) VALUES (3010, 1014, 1012, 'Pending', 500.00);
+INSERT INTO `ticket` (`Ticket_id`, `Event_id`, `Participant_id`, `Status`, `Price`) VALUES (3011, 1011, 1012, 'Pending', 200.00);
+INSERT INTO `ticket` (`Ticket_id`, `Event_id`, `Participant_id`, `Status`, `Price`) VALUES (3012, 104, 1012, 'Pending', 0.01);
 
 -- Dumping data for table payment
 INSERT INTO `payment` (`Payment_id`, `Ticket_id`, `Amount`, `Method`, `Date`) VALUES (1, 3001, 500.00, 'Credit Card', '2025-08-01');
@@ -206,9 +200,10 @@ INSERT INTO `volunteers` (`Volunteer_id`, `Name`, `Email`, `Contact`, `Type`, `E
 INSERT INTO `volunteers` (`Volunteer_id`, `Name`, `Email`, `Contact`, `Type`, `Event_id`) VALUES (204, 'Meera Joshi', 'meera.j@vol.com', '7755331199', 'Logistics', 101);
 INSERT INTO `volunteers` (`Volunteer_id`, `Name`, `Email`, `Contact`, `Type`, `Event_id`) VALUES (205, 'Deepak Rao', 'deepak_r@vol.com', '8844466220', 'Hospitality', 105);
 INSERT INTO `volunteers` (`Volunteer_id`, `Name`, `Email`, `Contact`, `Type`, `Event_id`) VALUES (206, 'Araham', 'araham@gmail.com', '9852014562', 'Security', 105);
+INSERT INTO `volunteers` (`Volunteer_id`, `Name`, `Email`, `Contact`, `Type`, `Event_id`) VALUES (207, 'Guest User', 'guest@example.com', '', 'General Volunteer', 103);
+INSERT INTO `volunteers` (`Volunteer_id`, `Name`, `Email`, `Contact`, `Type`, `Event_id`) VALUES (208, 'Guest User', 'guest+ev1014_1@example.com', '', 'Hospitality', 1014);
 
 -- Routine: FN_GetAvailableCapacity
-DELIMITER $$
 CREATE DEFINER=`root`@`localhost` FUNCTION `FN_GetAvailableCapacity`(p_event_id INT) RETURNS int
     READS SQL DATA
 BEGIN
@@ -224,11 +219,9 @@ BEGIN
     WHERE Event_id = p_event_id AND Status = 'Confirmed';
     
     RETURN v_capacity - v_tickets_sold;
-END$$
-DELIMITER ;
+END
 
 -- Routine: SP_ConfirmPayment
-DELIMITER $$
 CREATE DEFINER=`root`@`localhost` PROCEDURE `SP_ConfirmPayment`(
     IN p_ticket_id INT,
     IN p_payment_method VARCHAR(50),
@@ -243,11 +236,9 @@ BEGIN
     WHERE Ticket_id = p_ticket_id;
 
     SELECT CONCAT('Ticket ', p_ticket_id, ' confirmed and payment recorded.') AS StatusMessage;
-END$$
-DELIMITER ;
+END
 
 -- Trigger: TR_CheckCapacityBeforeSale
-DELIMITER $$
 CREATE DEFINER=`root`@`localhost` TRIGGER `TR_CheckCapacityBeforeSale` BEFORE INSERT ON `ticket` FOR EACH ROW BEGIN
     DECLARE v_available_capacity INT;
     SET v_available_capacity = FN_GetAvailableCapacity(NEW.Event_id);
@@ -256,11 +247,9 @@ CREATE DEFINER=`root`@`localhost` TRIGGER `TR_CheckCapacityBeforeSale` BEFORE IN
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'Cannot sell ticket: Event capacity is full.';
     END IF;
-END$$
-DELIMITER ;
+END
 
 -- Routine: FN_GetTotalConfirmedTickets
-DELIMITER $$
 CREATE DEFINER=`root`@`localhost` FUNCTION `FN_GetTotalConfirmedTickets`(p_event_id INT) RETURNS int
     READS SQL DATA
 BEGIN
@@ -272,11 +261,9 @@ BEGIN
     WHERE Event_id = p_event_id AND Status = 'Confirmed';
 
     RETURN confirmed_count;
-END$$
-DELIMITER ;
+END
 
 -- Routine: SP_MarkTicketAsPending
-DELIMITER $$
 CREATE DEFINER=`root`@`localhost` PROCEDURE `SP_MarkTicketAsPending`(
     IN p_ticket_id INT
 )
@@ -285,11 +272,9 @@ BEGIN
     SET Status = 'Pending'
     WHERE Ticket_id = p_ticket_id;
     SELECT CONCAT('Ticket ', p_ticket_id, ' status set to Pending.') AS StatusMessage;
-END$$
-DELIMITER ;
+END
 
 -- Routine: SP_GetEventSummary
-DELIMITER $$
 CREATE DEFINER=`root`@`localhost` PROCEDURE `SP_GetEventSummary`(
     IN p_event_id INT
 )
@@ -304,11 +289,9 @@ BEGIN
         Venue V ON E.Venue_id = V.Venue_id
     WHERE
         E.Event_id = p_event_id;
-END$$
-DELIMITER ;
+END
 
 -- Routine: FN_GetOrganizerName (Fixed from FN_CetOrganizerName typo)
-DELIMITER $$
 CREATE DEFINER=`root`@`localhost` FUNCTION `FN_GetOrganizerName`(p_organizer_id INT) RETURNS varchar(100) CHARSET utf8mb4
     READS SQL DATA
 BEGIN
@@ -318,23 +301,18 @@ BEGIN
     FROM Organizer
     WHERE Organizer_id = p_organizer_id;
     RETURN organizer_name;
-END$$
-DELIMITER ;
+END
 
 -- Trigger: TR_CheckTicketPrice (Fixed FOR EACH ROW and SQLSTATE)
-DELIMITER $$
 CREATE DEFINER=`root`@`localhost` TRIGGER `TR_CheckTicketPrice` BEFORE INSERT ON `ticket` FOR EACH ROW BEGIN
     IF NEW.Price <= 0.00 THEN
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'Ticket price must be greater than zero.';
     END IF;
-END$$
-DELIMITER ;
+END
 
 -- Trigger: TR_UpdateVolunteerOnEventDelete (Fixed FOR EACH ROW)
-DELIMITER $$
 CREATE DEFINER=`root`@`localhost` TRIGGER `TR_UpdateVolunteerOnEventDelete` AFTER DELETE ON `event` FOR EACH ROW BEGIN
     INSERT INTO Log (Log_Message)
     VALUES (CONCAT('Event ', OLD.Event_id, ' {', OLD.Name, '} was deleted. Volunteers may need re-assignment.'));
-END$$
-DELIMITER ;
+END
