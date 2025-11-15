@@ -10,8 +10,15 @@ from datetime import datetime, date
 import json
 import os
 from typing import Dict, List, Tuple, Optional
-import mysql.connector
-from mysql.connector import Error
+try:
+    import mysql.connector
+    from mysql.connector import Error
+    MYSQL_AVAILABLE = True
+except Exception:  # pragma: no cover - fallback when module is not installed
+    MYSQL_AVAILABLE = False
+    # Provide a minimal Error fallback so except Error: works in code
+    class Error(Exception):
+        pass
 from db_config import DB_CONFIG
 
 # Color scheme
@@ -42,6 +49,19 @@ class Database:
     
     def connect(self):
         """Establish MySQL database connection"""
+        if not MYSQL_AVAILABLE:
+            # Hint for missing dependency; do not try to connect
+            try:
+                messagebox.showerror(
+                    "Missing Dependency",
+                    "mysql-connector-python is not installed. Install it with: pip install -r requirements.txt"
+                )
+            except Exception:
+                # If GUI is not available, print on console
+                print("Missing dependency: mysql-connector-python. Run: pip install -r requirements.txt")
+
+            self.connection = None
+            return
         try:
             self.connection = mysql.connector.connect(**DB_CONFIG)
             if self.connection.is_connected():
@@ -53,6 +73,9 @@ class Database:
     def execute_query(self, query: str, params: tuple = None, fetch: bool = False):
         """Execute a SQL query"""
         try:
+            if not MYSQL_AVAILABLE:
+                # DB library missing — return fallbacks
+                return [] if fetch else False
             if not self.connection or not self.connection.is_connected():
                 self.connect()
             
@@ -101,6 +124,16 @@ class Database:
     def export_to_sql_file(self, filename: str = "dbms.sql"):
         """Export current database state to SQL file"""
         try:
+            if not MYSQL_AVAILABLE or not self.connection:
+                # No database available: export cannot proceed
+                try:
+                    messagebox.showwarning(
+                        "Export unavailable",
+                        "Database is not available — cannot export schema/data. Install mysql-connector-python and configure DB."
+                    )
+                except Exception:
+                    print("Database not available. Install mysql-connector-python and configure DB.")
+                return False
             sql_content = []
             
             # Header
@@ -116,6 +149,8 @@ class Database:
             for table in tables:
                 try:
                     # Get CREATE TABLE statement
+                    if not self.connection:
+                        continue
                     cursor = self.connection.cursor()
                     cursor.execute(f"SHOW CREATE TABLE {table}")
                     create_stmt = cursor.fetchone()
@@ -325,10 +360,23 @@ END""")
     # CRUD Operations for Events
     def add_event(self, event_data: Dict) -> bool:
         """Add new event to database"""
-        query = """INSERT INTO Event (Event_id, Name, Type, Date, Time, Venue_id, Organizer_id) 
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)"""
+        # Check if Price column exists, if not add it
+        try:
+            if MYSQL_AVAILABLE and self.connection:
+                cursor = self.connection.cursor()
+                cursor.execute("SHOW COLUMNS FROM Event LIKE 'Price'")
+                if not cursor.fetchone():
+                    cursor.execute("ALTER TABLE Event ADD COLUMN Price DECIMAL(10,2) DEFAULT 0.00")
+                    self.connection.commit()
+                cursor.close()
+        except Exception:
+            pass
+        
+        query = """INSERT INTO Event (Event_id, Name, Type, Date, Time, Venue_id, Organizer_id, Price) 
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"""
         params = (event_data['Event_id'], event_data['Name'], event_data['Type'],
-                 event_data['Date'], event_data['Time'], event_data['Venue_id'], event_data['Organizer_id'])
+                 event_data['Date'], event_data['Time'], event_data['Venue_id'], event_data['Organizer_id'],
+                 event_data.get('Price', 0.00))
         result = self.execute_query(query, params)
         if result:
             self.refresh_all_data()
@@ -337,10 +385,11 @@ END""")
     
     def update_event(self, event_data: Dict) -> bool:
         """Update existing event"""
-        query = """UPDATE Event SET Name=%s, Type=%s, Date=%s, Time=%s, Venue_id=%s, Organizer_id=%s 
+        query = """UPDATE Event SET Name=%s, Type=%s, Date=%s, Time=%s, Venue_id=%s, Organizer_id=%s, Price=%s 
                    WHERE Event_id=%s"""
         params = (event_data['Name'], event_data['Type'], event_data['Date'], 
-                 event_data['Time'], event_data['Venue_id'], event_data['Organizer_id'], event_data['Event_id'])
+                 event_data['Time'], event_data['Venue_id'], event_data['Organizer_id'], 
+                 event_data.get('Price', 0.00), event_data['Event_id'])
         result = self.execute_query(query, params)
         if result:
             self.refresh_all_data()
@@ -353,8 +402,16 @@ END""")
         self.log_event_deletion(event_id, event_name)
         
         try:
+            if not MYSQL_AVAILABLE:
+                messagebox.showerror("Database Error", "Database connector not available.")
+                return False
+
             if not self.connection or not self.connection.is_connected():
                 self.connect()
+
+            if not self.connection:
+                # Could not connect
+                return False
             
             cursor = self.connection.cursor(dictionary=True)
             
@@ -608,8 +665,12 @@ END""")
     def confirm_payment(self, ticket_id: int, payment_method: str, amount: float) -> str:
         """Procedure SP_ConfirmPayment - Call MySQL stored procedure"""
         try:
-            cursor = self.connection.cursor()
-            cursor.callproc('SP_ConfirmPayment', (ticket_id, payment_method, amount))
+            if MYSQL_AVAILABLE and self.connection:
+                cursor = self.connection.cursor()
+                cursor.callproc('SP_ConfirmPayment', (ticket_id, payment_method, amount))
+            else:
+                # No DB connector available - fallback to manual implementation below
+                raise Error("DB not available")
             
             # Get the result
             for result in cursor.stored_results():
@@ -621,7 +682,7 @@ END""")
             self.refresh_all_data()
             self.export_to_sql_file()  # Auto-export to SQL file
             return message
-        except Error as e:
+        except Exception as e:
             # Fallback to manual implementation
             ticket = next((t for t in self.tickets if t['Ticket_id'] == ticket_id), None)
             if not ticket:
@@ -678,8 +739,11 @@ END""")
     def mark_ticket_as_pending(self, ticket_id: int) -> str:
         """Procedure SP_MarkTicketAsPending - Call MySQL stored procedure"""
         try:
-            cursor = self.connection.cursor()
-            cursor.callproc('SP_MarkTicketAsPending', (ticket_id,))
+            if MYSQL_AVAILABLE and self.connection:
+                cursor = self.connection.cursor()
+                cursor.callproc('SP_MarkTicketAsPending', (ticket_id,))
+            else:
+                raise Error("DB not available")
             
             for result in cursor.stored_results():
                 row = result.fetchone()
@@ -689,7 +753,7 @@ END""")
             cursor.close()
             self.refresh_all_data()
             return message
-        except Error as e:
+        except Exception as e:
             # Fallback
             query = "UPDATE Ticket SET Status='Pending' WHERE Ticket_id=%s"
             if self.execute_query(query, (ticket_id,)):
@@ -814,6 +878,20 @@ END""")
             self.refresh_all_data()
         return result
 
+    def _get_unique_volunteer_email(self, base_email: str, event_id: int) -> str:
+        """Return an email guaranteed to be unique in Volunteers table by applying plus-addressing."""
+        if not base_email or '@' not in base_email:
+            base_email = f"guest{event_id}@example.com"
+        local_part, domain_part = base_email.split('@', 1)
+        candidate = base_email
+        counter = 1
+        existing = self.execute_query("SELECT 1 FROM Volunteers WHERE Email=%s", (candidate,), fetch=True)
+        while existing:
+            candidate = f"{local_part}+ev{event_id}_{counter}@{domain_part}"
+            counter += 1
+            existing = self.execute_query("SELECT 1 FROM Volunteers WHERE Email=%s", (candidate,), fetch=True)
+        return candidate
+
     def authenticate_user(self, username: str, password: str) -> Optional[Dict]:
         """Authenticate against `users` table or cached users; returns user dict on success"""
         # Check cached users first
@@ -833,33 +911,74 @@ END""")
     def register_user_as_participant(self, username: str, event_id: int, fullname: str, email: str, contact: str) -> Tuple[bool, str]:
         """Register a logged-in user as a participant for an event (creates Participant). Returns (ok, message)."""
         try:
-            new_pid = self.get_next_participant_id()
-            query = "INSERT INTO Participants (Participant_id, Name, Email, Contact) VALUES (%s, %s, %s, %s)"
-            if not self.execute_query(query, (new_pid, fullname, email, contact)):
-                return False, "Failed to create participant record"
+            # Check if participant already exists by email
+            existing_participant = None
+            if email:
+                check_query = "SELECT * FROM Participants WHERE Email = %s"
+                result = self.execute_query(check_query, (email,), fetch=True)
+                if result:
+                    existing_participant = result[0]
+            
+            # Use existing participant ID or create new one
+            if existing_participant:
+                participant_id = existing_participant['Participant_id']
+                
+                # Check if already registered for this event
+                check_ticket = "SELECT * FROM Ticket WHERE Event_id = %s AND Participant_id = %s"
+                existing_ticket = self.execute_query(check_ticket, (event_id, participant_id), fetch=True)
+                if existing_ticket:
+                    return False, "You are already registered for this event"
+            else:
+                participant_id = self.get_next_participant_id()
+                query = "INSERT INTO Participants (Participant_id, Name, Email, Contact) VALUES (%s, %s, %s, %s)"
+                if not self.execute_query(query, (participant_id, fullname, email, contact)):
+                    return False, "Failed to create participant record"
 
-            # Optionally create a pending ticket with a minimal price (0.01) to avoid triggers blocking
+            # Get the event's fixed price
+            event = next((e for e in self.events if e['Event_id'] == event_id), None)
+            ticket_price = event.get('Price', 0.01) if event else 0.01
+            if ticket_price <= 0:
+                ticket_price = 0.01  # Fallback to minimal price
+            
+            # Create a pending ticket with the event's fixed price
             new_tid = max((t['Ticket_id'] for t in self.tickets), default=3000) + 1
             ticket_query = "INSERT INTO Ticket (Ticket_id, Event_id, Participant_id, Status, Price) VALUES (%s,%s,%s,%s,%s)"
-            if not self.execute_query(ticket_query, (new_tid, event_id, new_pid, 'Pending', 0.01)):
-                return False, "Participant created but failed to create ticket"
+            if not self.execute_query(ticket_query, (new_tid, event_id, participant_id, 'Pending', ticket_price)):
+                return False, "Failed to create ticket"
 
             self.refresh_all_data()
             self.export_to_sql_file()
-            return True, f"Registered as participant (Participant ID: {new_pid}, Ticket ID: {new_tid})"
+            return True, f"Registered as participant (Participant ID: {participant_id}, Ticket ID: {new_tid}, Price: ${ticket_price:.2f})"
         except Exception as e:
             return False, str(e)
 
-    def register_user_as_volunteer(self, username: str, event_id: int, fullname: str, email: str, contact: str, vtype: str = 'General') -> Tuple[bool, str]:
+    def register_user_as_volunteer(self, username: str, event_id: int, fullname: str, email: str, contact: str, vtype: str = 'General Volunteer') -> Tuple[bool, str]:
         """Register a logged-in user as a volunteer for an event (creates Volunteers)."""
         try:
+            # Check if already volunteering for this event
+            if email:
+                check_query = "SELECT * FROM Volunteers WHERE Email = %s AND Event_id = %s"
+                result = self.execute_query(check_query, (email, event_id), fetch=True)
+                if result:
+                    return False, "You are already registered as a volunteer for this event"
+            
+            email_to_use = email
+            if email:
+                dup_check = self.execute_query("SELECT Event_id FROM Volunteers WHERE Email = %s", (email,), fetch=True)
+                if dup_check:
+                    email_to_use = self._get_unique_volunteer_email(email, event_id)
+            else:
+                email_to_use = self._get_unique_volunteer_email('guest@example.com', event_id)
+
             new_vid = self.get_next_volunteer_id()
             query = "INSERT INTO Volunteers (Volunteer_id, Name, Email, Contact, Type, Event_id) VALUES (%s,%s,%s,%s,%s,%s)"
-            if not self.execute_query(query, (new_vid, fullname, email, contact, vtype, event_id)):
+            if not self.execute_query(query, (new_vid, fullname, email_to_use, contact, vtype, event_id)):
                 return False, "Failed to create volunteer record"
 
             self.refresh_all_data()
             self.export_to_sql_file()
+            if email_to_use != email and email:
+                return True, f"Registered as volunteer (Volunteer ID: {new_vid}). Email stored as {email_to_use} to keep it unique."
             return True, f"Registered as volunteer (Volunteer ID: {new_vid})"
         except Exception as e:
             return False, str(e)
@@ -967,6 +1086,185 @@ class CRUDDialog(tk.Toplevel):
         self.result = None
         self.destroy()
 
+class LoginDialog(tk.Toplevel):
+    """Login dialog for startup authentication"""
+    
+    def __init__(self, parent, db):
+        super().__init__(parent)
+        self.parent = parent
+        self.db = db
+        self.result = None
+        
+        self.title("Event Management System - Login")
+        self.geometry("400x350")
+        self.resizable(False, False)
+        
+        # Make dialog modal
+        self.transient(parent)
+        self.grab_set()
+        
+        # Center the dialog
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() // 2) - (400 // 2)
+        y = (self.winfo_screenheight() // 2) - (350 // 2)
+        self.geometry(f"+{x}+{y}")
+        
+        self.create_widgets()
+        
+    def create_widgets(self):
+        """Create login form widgets"""
+        # Title
+        title_label = tk.Label(self, text="Event Management System", 
+                              font=('Arial', 16, 'bold'))
+        title_label.pack(pady=20)
+        
+        # Form frame
+        form_frame = ttk.Frame(self, padding=20)
+        form_frame.pack(fill='both', expand=True)
+        
+        # Username
+        ttk.Label(form_frame, text="Username:").grid(row=0, column=0, sticky='w', pady=5)
+        self.username_entry = ttk.Entry(form_frame, width=30)
+        self.username_entry.grid(row=0, column=1, pady=5, padx=5)
+        
+        # Password
+        ttk.Label(form_frame, text="Password:").grid(row=1, column=0, sticky='w', pady=5)
+        self.password_entry = ttk.Entry(form_frame, width=30, show='*')
+        self.password_entry.grid(row=1, column=1, pady=5, padx=5)
+        
+        # Role selection
+        ttk.Label(form_frame, text="Role:").grid(row=2, column=0, sticky='w', pady=5)
+        self.role_var = tk.StringVar(value="User")
+        role_frame = ttk.Frame(form_frame)
+        role_frame.grid(row=2, column=1, sticky='w', pady=5)
+        ttk.Radiobutton(role_frame, text="Event Manager", variable=self.role_var, 
+                       value="Manager").pack(side='left', padx=5)
+        ttk.Radiobutton(role_frame, text="User/Participant", variable=self.role_var, 
+                       value="User").pack(side='left', padx=5)
+        
+        # Button frame
+        button_frame = ttk.Frame(form_frame)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=20)
+        
+        ttk.Button(button_frame, text="Login", command=self.login).pack(side='left', padx=5)
+        ttk.Button(button_frame, text="Register", command=self.register).pack(side='left', padx=5)
+        ttk.Button(button_frame, text="Exit", command=self.exit_app).pack(side='left', padx=5)
+        
+        # Bind Enter key to login
+        self.username_entry.bind('<Return>', lambda e: self.login())
+        self.password_entry.bind('<Return>', lambda e: self.login())
+        
+        # Focus username field
+        self.username_entry.focus()
+        
+    def login(self):
+        """Handle login attempt"""
+        username = self.username_entry.get().strip()
+        password = self.password_entry.get().strip()
+        role = self.role_var.get()
+        
+        if not username or not password:
+            messagebox.showwarning("Input Required", "Please enter both username and password")
+            return
+        
+        # Authenticate user
+        user = self.db.authenticate_user(username, password)
+        
+        if user:
+            # Check if role matches
+            if user['Role'] != role:
+                messagebox.showerror("Login Failed", 
+                                   f"Invalid role. This account is registered as {user['Role']}")
+                return
+            
+            self.result = {
+                'username': username,
+                'user_id': user['User_id'],
+                'role': user['Role'],
+                'fullname': user['Fullname']
+            }
+            self.destroy()
+        else:
+            messagebox.showerror("Login Failed", "Invalid username or password")
+            self.password_entry.delete(0, tk.END)
+            
+    def register(self):
+        """Handle user registration"""
+        # Create registration dialog
+        reg_dialog = tk.Toplevel(self)
+        reg_dialog.title("Register New User")
+        reg_dialog.geometry("400x300")
+        reg_dialog.resizable(False, False)
+        reg_dialog.transient(self)
+        reg_dialog.grab_set()
+        
+        # Center the dialog
+        reg_dialog.update_idletasks()
+        x = (reg_dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (reg_dialog.winfo_screenheight() // 2) - (300 // 2)
+        reg_dialog.geometry(f"+{x}+{y}")
+        
+        # Form frame
+        form_frame = ttk.Frame(reg_dialog, padding=20)
+        form_frame.pack(fill='both', expand=True)
+        
+        # Fields
+        ttk.Label(form_frame, text="Full Name:").grid(row=0, column=0, sticky='w', pady=5)
+        fullname_entry = ttk.Entry(form_frame, width=30)
+        fullname_entry.grid(row=0, column=1, pady=5, padx=5)
+        
+        ttk.Label(form_frame, text="Email:").grid(row=1, column=0, sticky='w', pady=5)
+        email_entry = ttk.Entry(form_frame, width=30)
+        email_entry.grid(row=1, column=1, pady=5, padx=5)
+        
+        ttk.Label(form_frame, text="Username:").grid(row=2, column=0, sticky='w', pady=5)
+        reg_username_entry = ttk.Entry(form_frame, width=30)
+        reg_username_entry.grid(row=2, column=1, pady=5, padx=5)
+        
+        ttk.Label(form_frame, text="Password:").grid(row=3, column=0, sticky='w', pady=5)
+        reg_password_entry = ttk.Entry(form_frame, width=30, show='*')
+        reg_password_entry.grid(row=3, column=1, pady=5, padx=5)
+        
+        ttk.Label(form_frame, text="Role:").grid(row=4, column=0, sticky='w', pady=5)
+        reg_role_var = tk.StringVar(value="User")
+        reg_role_frame = ttk.Frame(form_frame)
+        reg_role_frame.grid(row=4, column=1, sticky='w', pady=5)
+        ttk.Radiobutton(reg_role_frame, text="Manager", variable=reg_role_var, 
+                       value="Manager").pack(side='left', padx=5)
+        ttk.Radiobutton(reg_role_frame, text="User", variable=reg_role_var, 
+                       value="User").pack(side='left', padx=5)
+        
+        def do_register():
+            fullname = fullname_entry.get().strip()
+            email = email_entry.get().strip()
+            username = reg_username_entry.get().strip()
+            password = reg_password_entry.get().strip()
+            role = reg_role_var.get()
+            
+            if not all([fullname, email, username, password]):
+                messagebox.showwarning("Input Required", "Please fill in all fields")
+                return
+            
+            # Add user to database
+            if self.db.add_user(username, password, fullname, email, role):
+                messagebox.showinfo("Success", "Registration successful! You can now login.")
+                reg_dialog.destroy()
+            else:
+                messagebox.showerror("Error", "Registration failed. Username may already exist.")
+        
+        # Buttons
+        button_frame = ttk.Frame(form_frame)
+        button_frame.grid(row=5, column=0, columnspan=2, pady=20)
+        ttk.Button(button_frame, text="Register", command=do_register).pack(side='left', padx=5)
+        ttk.Button(button_frame, text="Cancel", command=reg_dialog.destroy).pack(side='left', padx=5)
+        
+        fullname_entry.focus()
+        
+    def exit_app(self):
+        """Exit the application"""
+        self.result = None
+        self.parent.quit()
+
 class EventManagementApp:
     """Main application class"""
     
@@ -977,8 +1275,9 @@ class EventManagementApp:
         
         # Initialize database
         self.db = Database()
-        # Currently logged-in public user (for Public Portal)
+        # Currently logged-in user (for access control)
         self.current_user = None
+        self.current_role = None
         
         # Configure styles
         self.setup_styles()
@@ -991,6 +1290,229 @@ class EventManagementApp:
         
         # Load initial data
         self.refresh_all_data()
+        
+        # Show startup login dialog
+        self.show_startup_login()
+    
+    def show_startup_login(self):
+        """Show login dialog at startup"""
+        login_dialog = LoginDialog(self.root, self.db)
+        self.root.wait_window(login_dialog)
+        
+        if login_dialog.result:
+            self.current_user = login_dialog.result['username']
+            self.current_role = login_dialog.result['role']
+            
+            # Update user info in header
+            self.user_info_label.config(
+                text=f"Logged in as: {login_dialog.result['fullname']} ({login_dialog.result['role']})"
+            )
+            
+            # Apply role-based permissions
+            self.set_role_permissions()
+        else:
+            # User closed login dialog or clicked Exit - quit app
+            self.root.quit()
+    
+    def set_role_permissions(self):
+        """Enable/disable UI elements based on user role"""
+        if self.current_role == "Manager":
+            # Managers have full access - enable all buttons and show all tabs
+            state = tk.NORMAL
+            
+            # Show all tabs for managers
+            self.notebook.tab(self.dashboard_frame, state="normal")
+            self.notebook.tab(self.events_frame, state="normal")
+            self.notebook.tab(self.tickets_frame, state="normal")
+            self.notebook.tab(self.participants_frame, state="normal")
+            self.notebook.tab(self.venues_frame, state="normal")
+            self.notebook.tab(self.analytics_frame, state="normal")
+            self.notebook.tab(self.advanced_frame, state="normal")
+        else:
+            # Regular users have limited access - disable management buttons
+            state = tk.DISABLED
+            
+            # Hide management tabs for regular users - only show Dashboard and Events
+            self.notebook.tab(self.dashboard_frame, state="normal")  # Read-only dashboard
+            self.notebook.tab(self.events_frame, state="normal")  # Can view and register
+            self.notebook.tab(self.tickets_frame, state="hidden")  # Hidden from users
+            self.notebook.tab(self.participants_frame, state="hidden")  # Hidden from users
+            self.notebook.tab(self.venues_frame, state="hidden")  # Hidden from users
+            self.notebook.tab(self.analytics_frame, state="hidden")  # Hidden from users
+            self.notebook.tab(self.advanced_frame, state="hidden")  # Hidden from users
+            
+            # Switch to Dashboard tab for users
+            self.notebook.select(self.dashboard_frame)
+        
+        # Configure button states (disabled for Users)
+        if hasattr(self, 'add_event_btn'):
+            self.add_event_btn.config(state=state)
+        if hasattr(self, 'edit_event_btn'):
+            self.edit_event_btn.config(state=state)
+        if hasattr(self, 'delete_event_btn'):
+            self.delete_event_btn.config(state=state)
+        if hasattr(self, 'add_ticket_btn'):
+            self.add_ticket_btn.config(state=state)
+        if hasattr(self, 'process_payment_btn'):
+            self.process_payment_btn.config(state=state)
+        if hasattr(self, 'add_participant_btn'):
+            self.add_participant_btn.config(state=state)
+        if hasattr(self, 'add_volunteer_btn'):
+            self.add_volunteer_btn.config(state=state)
+        if hasattr(self, 'add_venue_btn'):
+            self.add_venue_btn.config(state=state)
+        if hasattr(self, 'add_sponsor_btn'):
+            self.add_sponsor_btn.config(state=state)
+        if hasattr(self, 'export_reports_btn'):
+            self.export_reports_btn.config(state=state)
+        
+        # User registration buttons (always visible - will prompt for login if needed)
+        if hasattr(self, 'register_participant_btn') and hasattr(self, 'register_volunteer_btn'):
+            # Keep buttons visible and enabled for all users
+            self.register_participant_btn.config(state=tk.NORMAL)
+            self.register_volunteer_btn.config(state=tk.NORMAL)
+    
+    def logout(self):
+        """Logout current user and show login dialog"""
+        # Clear current user
+        self.current_user = None
+        self.current_role = None
+        
+        # Update header
+        self.user_info_label.config(text="Not logged in")
+        
+        # Show login dialog again
+        self.show_startup_login()
+    
+    def show_guest_login_dialog(self) -> bool:
+        """Show login/register dialog for guests. Returns True if successful, False if cancelled."""
+        guest_dialog = tk.Toplevel(self.root)
+        guest_dialog.title("Login Required")
+        guest_dialog.geometry("400x450")
+        guest_dialog.resizable(False, False)
+        guest_dialog.transient(self.root)
+        guest_dialog.grab_set()
+        
+        # Center the dialog
+        guest_dialog.update_idletasks()
+        x = (guest_dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (guest_dialog.winfo_screenheight() // 2) - (450 // 2)
+        guest_dialog.geometry(f"+{x}+{y}")
+        
+        success = {'value': False}
+        
+        # Create notebook for Login/Register tabs
+        notebook = ttk.Notebook(guest_dialog)
+        notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Login Tab
+        login_frame = ttk.Frame(notebook, padding=20)
+        notebook.add(login_frame, text="Login")
+        
+        ttk.Label(login_frame, text="Username:").grid(row=0, column=0, sticky='w', pady=5)
+        login_username = ttk.Entry(login_frame, width=30)
+        login_username.grid(row=0, column=1, pady=5, padx=5)
+        
+        ttk.Label(login_frame, text="Password:").grid(row=1, column=0, sticky='w', pady=5)
+        login_password = ttk.Entry(login_frame, width=30, show='*')
+        login_password.grid(row=1, column=1, pady=5, padx=5)
+        
+        def do_login():
+            username = login_username.get().strip()
+            password = login_password.get().strip()
+            
+            if not username or not password:
+                messagebox.showwarning("Input Required", "Please enter both username and password")
+                return
+            
+            user = self.db.authenticate_user(username, password)
+            if user:
+                self.current_user = username
+                self.current_role = user['Role']
+                self.user_info_label.config(
+                    text=f"Logged in as: {user.get('Fullname', username)} ({user['Role']})"
+                )
+                self.set_role_permissions()
+                success['value'] = True
+                guest_dialog.destroy()
+            else:
+                messagebox.showerror("Login Failed", "Invalid username or password")
+        
+        ttk.Button(login_frame, text="Login", command=do_login).grid(row=2, column=0, columnspan=2, pady=20)
+        
+        # Register Tab
+        register_frame = ttk.Frame(notebook, padding=20)
+        notebook.add(register_frame, text="Register")
+        
+        ttk.Label(register_frame, text="Full Name:").grid(row=0, column=0, sticky='w', pady=5)
+        reg_fullname = ttk.Entry(register_frame, width=30)
+        reg_fullname.grid(row=0, column=1, pady=5, padx=5)
+        
+        ttk.Label(register_frame, text="Email:").grid(row=1, column=0, sticky='w', pady=5)
+        reg_email = ttk.Entry(register_frame, width=30)
+        reg_email.grid(row=1, column=1, pady=5, padx=5)
+        
+        ttk.Label(register_frame, text="Username:").grid(row=2, column=0, sticky='w', pady=5)
+        reg_username = ttk.Entry(register_frame, width=30)
+        reg_username.grid(row=2, column=1, pady=5, padx=5)
+        
+        ttk.Label(register_frame, text="Password:").grid(row=3, column=0, sticky='w', pady=5)
+        reg_password = ttk.Entry(register_frame, width=30, show='*')
+        reg_password.grid(row=3, column=1, pady=5, padx=5)
+        
+        def do_register():
+            fullname = reg_fullname.get().strip()
+            email = reg_email.get().strip()
+            username = reg_username.get().strip()
+            password = reg_password.get().strip()
+            
+            if not all([fullname, email, username, password]):
+                messagebox.showwarning("Input Required", "Please fill in all fields")
+                return
+            
+            # Get next user ID
+            try:
+                max_id = max((u.get('User_id', 0) for u in self.db.users), default=100)
+                new_user_id = max_id + 1
+            except:
+                new_user_id = 101
+            
+            user_data = {
+                'User_id': new_user_id,
+                'Username': username,
+                'Password': password,
+                'Fullname': fullname,
+                'Email': email,
+                'Role': 'User'
+            }
+            
+            if self.db.add_user(user_data):
+                messagebox.showinfo("Success", "Registration successful! Logging you in...")
+                # Auto-login after registration
+                self.current_user = username
+                self.current_role = 'User'
+                self.user_info_label.config(
+                    text=f"Logged in as: {fullname} (User)"
+                )
+                self.set_role_permissions()
+                success['value'] = True
+                guest_dialog.destroy()
+            else:
+                messagebox.showerror("Error", "Registration failed. Username may already exist.")
+        
+        ttk.Button(register_frame, text="Register", command=do_register).grid(row=4, column=0, columnspan=2, pady=20)
+        
+        # Cancel button at bottom
+        ttk.Button(guest_dialog, text="Cancel", command=guest_dialog.destroy).pack(pady=10)
+        
+        # Bind Enter key
+        login_username.bind('<Return>', lambda e: do_login())
+        login_password.bind('<Return>', lambda e: do_login())
+        
+        login_username.focus()
+        
+        self.root.wait_window(guest_dialog)
+        return success['value']
     
     def setup_styles(self):
         """Configure ttk styles"""
@@ -1005,12 +1527,21 @@ class EventManagementApp:
     def create_main_layout(self):
         """Create the main application layout"""
         # Header
-        header_frame = ttk.Frame(self.root)
-        header_frame.pack(fill=tk.X, padx=10, pady=5)
+        self.header_frame = ttk.Frame(self.root)
+        self.header_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        title_label = ttk.Label(header_frame, text="Event Management System", 
+        title_label = ttk.Label(self.header_frame, text="Event Management System", 
                                font=('Arial', 20, 'bold'))
         title_label.pack(side=tk.LEFT)
+        
+        # User info label (right side of header)
+        self.user_info_label = ttk.Label(self.header_frame, text="Not logged in", 
+                                         font=('Arial', 10))
+        self.user_info_label.pack(side=tk.RIGHT, padx=10)
+        
+        # Logout button
+        self.logout_btn = ttk.Button(self.header_frame, text="Logout", command=self.logout)
+        self.logout_btn.pack(side=tk.RIGHT, padx=5)
         
         # Main notebook for tabs
         self.notebook = ttk.Notebook(self.root)
@@ -1052,11 +1583,6 @@ class EventManagementApp:
         self.advanced_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.advanced_frame, text="Advanced Features")
         self.create_advanced_tab()
-
-        # Public Portal Tab (for users to view events and register)
-        self.public_frame = ttk.Frame(self.notebook)
-        self.notebook.add(self.public_frame, text="Public Portal")
-        self.create_public_tab()
     
     def create_dashboard_tab(self):
         """Create the dashboard tab with KPIs"""
@@ -1132,17 +1658,28 @@ class EventManagementApp:
         search_entry.pack(side=tk.LEFT, padx=5)
         
         # Buttons
-        add_btn = ttk.Button(control_frame, text="Add Event", command=self.add_event)
-        add_btn.pack(side=tk.LEFT, padx=5)
+        self.add_event_btn = ttk.Button(control_frame, text="Add Event", command=self.add_event)
+        self.add_event_btn.pack(side=tk.LEFT, padx=5)
         
-        edit_btn = ttk.Button(control_frame, text="Edit Event", command=self.edit_event)
-        edit_btn.pack(side=tk.LEFT, padx=5)
+        self.edit_event_btn = ttk.Button(control_frame, text="Edit Event", command=self.edit_event)
+        self.edit_event_btn.pack(side=tk.LEFT, padx=5)
         
-        delete_btn = ttk.Button(control_frame, text="Delete Event", command=self.delete_event)
-        delete_btn.pack(side=tk.LEFT, padx=5)
+        self.delete_event_btn = ttk.Button(control_frame, text="Delete Event", command=self.delete_event)
+        self.delete_event_btn.pack(side=tk.LEFT, padx=5)
         
-        refresh_btn = ttk.Button(control_frame, text="Refresh", command=self.refresh_events)
-        refresh_btn.pack(side=tk.LEFT, padx=5)
+        self.refresh_events_btn = ttk.Button(control_frame, text="Refresh", command=self.refresh_events)
+        self.refresh_events_btn.pack(side=tk.LEFT, padx=5)
+        
+        # User registration buttons (for non-managers)
+        ttk.Separator(control_frame, orient='vertical').pack(side=tk.LEFT, padx=10, fill='y')
+        
+        self.register_participant_btn = ttk.Button(control_frame, text="Register as Participant", 
+                                                   command=self.user_register_participant)
+        self.register_participant_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.register_volunteer_btn = ttk.Button(control_frame, text="Register as Volunteer", 
+                                                 command=self.user_register_volunteer)
+        self.register_volunteer_btn.pack(side=tk.LEFT, padx=5)
         
         # Create treeview
         columns = ('Event ID', 'Name', 'Type', 'Date', 'Time', 'Venue ID', 'Organizer ID')
@@ -1175,8 +1712,8 @@ class EventManagementApp:
         ticket_control = ttk.Frame(left_frame)
         ticket_control.pack(fill=tk.X, pady=5)
         
-        add_ticket_btn = ttk.Button(ticket_control, text="Add Ticket", command=self.add_ticket)
-        add_ticket_btn.pack(side=tk.LEFT, padx=5)
+        self.add_ticket_btn = ttk.Button(ticket_control, text="Add Ticket", command=self.add_ticket)
+        self.add_ticket_btn.pack(side=tk.LEFT, padx=5)
         
         # Tickets treeview
         ticket_columns = ('Ticket ID', 'Event ID', 'Participant ID', 'Status', 'Price')
@@ -1243,8 +1780,8 @@ class EventManagementApp:
         part_control = ttk.Frame(top_frame)
         part_control.pack(fill=tk.X, pady=5)
         
-        add_part_btn = ttk.Button(part_control, text="Add Participant", command=self.add_participant)
-        add_part_btn.pack(side=tk.LEFT, padx=5)
+        self.add_participant_btn = ttk.Button(part_control, text="Add Participant", command=self.add_participant)
+        self.add_participant_btn.pack(side=tk.LEFT, padx=5)
         
         # Participants treeview
         part_columns = ('Participant ID', 'Name', 'Email', 'Contact')
@@ -1266,8 +1803,8 @@ class EventManagementApp:
         vol_control = ttk.Frame(bottom_frame)
         vol_control.pack(fill=tk.X, pady=5)
         
-        add_vol_btn = ttk.Button(vol_control, text="Add Volunteer", command=self.add_volunteer)
-        add_vol_btn.pack(side=tk.LEFT, padx=5)
+        self.add_volunteer_btn = ttk.Button(vol_control, text="Add Volunteer", command=self.add_volunteer)
+        self.add_volunteer_btn.pack(side=tk.LEFT, padx=5)
         
         # Volunteers treeview
         vol_columns = ('Volunteer ID', 'Name', 'Email', 'Contact', 'Type', 'Event ID')
@@ -1295,8 +1832,8 @@ class EventManagementApp:
         venue_control = ttk.Frame(left_frame)
         venue_control.pack(fill=tk.X, pady=5)
         
-        add_venue_btn = ttk.Button(venue_control, text="Add Venue", command=self.add_venue)
-        add_venue_btn.pack(side=tk.LEFT, padx=5)
+        self.add_venue_btn = ttk.Button(venue_control, text="Add Venue", command=self.add_venue)
+        self.add_venue_btn.pack(side=tk.LEFT, padx=5)
         
         # Venues treeview
         venue_columns = ('Venue ID', 'Name', 'Location', 'Capacity')
@@ -1318,8 +1855,8 @@ class EventManagementApp:
         sponsor_control = ttk.Frame(right_frame)
         sponsor_control.pack(fill=tk.X, pady=5)
         
-        add_sponsor_btn = ttk.Button(sponsor_control, text="Add Sponsor", command=self.add_sponsor)
-        add_sponsor_btn.pack(side=tk.LEFT, padx=5)
+        self.add_sponsor_btn = ttk.Button(sponsor_control, text="Add Sponsor", command=self.add_sponsor)
+        self.add_sponsor_btn.pack(side=tk.LEFT, padx=5)
         
         # Total sponsorship label
         self.total_sponsorship_label = ttk.Label(right_frame, text="", font=('Arial', 10, 'bold'))
@@ -1357,9 +1894,9 @@ class EventManagementApp:
         ttk.Label(header_frame, text="Analytics & Reports", 
                  font=('Arial', 16, 'bold')).pack(side=tk.LEFT)
         
-        refresh_btn = ttk.Button(header_frame, text="🔄 Refresh Data", 
+        self.analytics_refresh_btn = ttk.Button(header_frame, text="🔄 Refresh Data", 
                                command=self.refresh_analytics)
-        refresh_btn.pack(side=tk.RIGHT, padx=5)
+        self.analytics_refresh_btn.pack(side=tk.RIGHT, padx=5)
         
         # Report 1: Event Capacity Report
         report1_frame = ttk.LabelFrame(scrollable_frame, text="Event Capacity Report", padding=10)
@@ -1383,9 +1920,9 @@ class EventManagementApp:
         self.report3_text.pack()
         
         # Export button
-        export_btn = ttk.Button(scrollable_frame, text="Export All Reports", 
+        self.export_reports_btn = ttk.Button(scrollable_frame, text="Export All Reports", 
                                command=self.export_reports)
-        export_btn.pack(pady=20)
+        self.export_reports_btn.pack(pady=20)
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -1457,9 +1994,17 @@ class EventManagementApp:
         user = self.db.authenticate_user(username, password)
         if user:
             self.current_user = user
+            self.current_role = user.get('Role', 'User')  # Update role from database
             self.public_status_label.config(text=f"Logged in as: {user.get('Fullname') or user.get('Username')}", foreground='green')
             self.register_part_btn.state(['!disabled'])
             self.register_vol_btn.state(['!disabled'])
+            
+            # Update main header and apply permissions
+            self.user_info_label.config(
+                text=f"Logged in as: {user.get('Fullname') or user.get('Username')} ({self.current_role})"
+            )
+            self.set_role_permissions()
+            
             messagebox.showinfo("Login", f"Welcome {user.get('Fullname') or user.get('Username')}!")
         else:
             messagebox.showerror("Login Failed", "Invalid username or password")
@@ -1605,6 +2150,156 @@ class EventManagementApp:
         self.report3_text.config(state=tk.DISABLED)
     
     # Event handler methods
+    def user_register_participant(self):
+        """Allow user to register as participant for selected event (prompts for login if needed)"""
+        selection = self.events_tree.selection()
+        if not selection:
+            messagebox.showwarning("Select Event", "Please select an event to register for")
+            return
+        
+        item = self.events_tree.item(selection[0])
+        event_id = int(item['values'][0])
+        event_name = item['values'][1]
+        
+        # If not logged in, show login/register dialog
+        if not self.current_user:
+            if not self.show_guest_login_dialog():
+                return  # User cancelled login
+        
+        # Get user details from database
+        try:
+            if not MYSQL_AVAILABLE or not getattr(self.db, 'connection', None):
+                messagebox.showerror("Database Unavailable", "Database connector not available. Install mysql-connector-python and configure DB to continue.")
+                return
+            cursor = self.db.connection.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM users WHERE Username = %s", (self.current_user,))
+            user = cursor.fetchone()
+            cursor.close()
+            
+            if not user:
+                messagebox.showerror("Error", "User details not found")
+                return
+            
+            fullname = user.get('Fullname', self.current_user)
+            email = user.get('Email', '')
+            contact = ''
+            
+            ok, msg = self.db.register_user_as_participant(self.current_user, event_id, fullname, email, contact)
+            if ok:
+                messagebox.showinfo("Registered", f"Successfully registered for '{event_name}'!")
+                self.refresh_all_data()
+            else:
+                messagebox.showerror("Error", msg)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to register: {str(e)}")
+    
+    def user_register_volunteer(self):
+        """Allow user to register as volunteer for selected event (prompts for login if needed)"""
+        selection = self.events_tree.selection()
+        if not selection:
+            messagebox.showwarning("Select Event", "Please select an event to volunteer for")
+            return
+        
+        item = self.events_tree.item(selection[0])
+        event_id = int(item['values'][0])
+        event_name = item['values'][1]
+        
+        # If not logged in, show login/register dialog
+        if not self.current_user:
+            if not self.show_guest_login_dialog():
+                return  # User cancelled login
+        
+        # Get user details from database
+        try:
+            if not MYSQL_AVAILABLE or not getattr(self.db, 'connection', None):
+                messagebox.showerror("Database Unavailable", "Database connector not available. Install mysql-connector-python and configure DB to continue.")
+                return
+            cursor = self.db.connection.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM users WHERE Username = %s", (self.current_user,))
+            user = cursor.fetchone()
+            cursor.close()
+            
+            if not user:
+                messagebox.showerror("Error", "User details not found")
+                return
+            
+            fullname = user.get('Fullname', self.current_user)
+            email = user.get('Email', '')
+            contact = ''
+            
+            # Ask for volunteer type
+            vol_type_dialog = tk.Toplevel(self.root)
+            vol_type_dialog.title("Select Volunteer Type")
+            vol_type_dialog.geometry("400x350")
+            vol_type_dialog.resizable(True, True)
+            vol_type_dialog.transient(self.root)
+            vol_type_dialog.grab_set()
+            
+            # Center the dialog
+            vol_type_dialog.update_idletasks()
+            x = (vol_type_dialog.winfo_screenwidth() // 2) - (400 // 2)
+            y = (vol_type_dialog.winfo_screenheight() // 2) - (350 // 2)
+            vol_type_dialog.geometry(f"+{x}+{y}")
+            
+            # Title
+            ttk.Label(vol_type_dialog, text=f"Select volunteer type for '{event_name}':", 
+                     font=('Arial', 10, 'bold')).pack(pady=15)
+            
+            # Scrollable radio list so long type lists still fit, keep buttons visible
+            scroll_frame = ttk.Frame(vol_type_dialog)
+            scroll_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+            canvas = tk.Canvas(scroll_frame, height=200, borderwidth=0, highlightthickness=0)
+            scrollbar = ttk.Scrollbar(scroll_frame, orient="vertical", command=canvas.yview)
+            scrollable_frame = ttk.Frame(canvas)
+
+            scrollable_frame.bind(
+                "<Configure>",
+                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            )
+
+            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            
+            vol_type_var = tk.StringVar(value='General')
+            volunteer_types = ['General', 'Security', 'Logistics', 'Registration Desk', 
+                             'Stage Management', 'Hospitality']
+            
+            for vtype in volunteer_types:
+                ttk.Radiobutton(scrollable_frame, text=vtype, variable=vol_type_var, 
+                              value=vtype).pack(anchor='w', padx=40, pady=5)
+
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            
+            selected_type = {'type': None}
+            
+            def confirm_type():
+                selected_type['type'] = vol_type_var.get()
+                vol_type_dialog.destroy()
+            
+            def cancel_type():
+                vol_type_dialog.destroy()
+            
+            btn_frame = ttk.Frame(vol_type_dialog)
+            btn_frame.pack(pady=15)
+            ttk.Button(btn_frame, text="Confirm", command=confirm_type).pack(side='left', padx=5)
+            ttk.Button(btn_frame, text="Cancel", command=cancel_type).pack(side='left', padx=5)
+            
+            self.root.wait_window(vol_type_dialog)
+            
+            if selected_type['type']:
+                ok, msg = self.db.register_user_as_volunteer(self.current_user, event_id, fullname, 
+                                                            email, contact, selected_type['type'])
+                if ok:
+                    messagebox.showinfo("Registered", 
+                                      f"Successfully registered as {selected_type['type']} volunteer for '{event_name}'!")
+                    self.refresh_all_data()
+                else:
+                    messagebox.showerror("Error", msg)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to register: {str(e)}")
+    
     def filter_events(self, *args):
         """Filter events based on search text"""
         search_text = self.event_search_var.get().lower()
@@ -1640,7 +2335,8 @@ class EventManagementApp:
             {'name': 'Date', 'label': 'Date (YYYY-MM-DD)', 'type': 'date'},
             {'name': 'Time', 'label': 'Time (HH:MM:SS)', 'type': 'time'},
             {'name': 'Venue_id', 'label': 'Venue', 'type': 'dropdown', 'values': venue_options},
-            {'name': 'Organizer_id', 'label': 'Organizer', 'type': 'dropdown', 'values': organizer_options}
+            {'name': 'Organizer_id', 'label': 'Organizer', 'type': 'dropdown', 'values': organizer_options},
+            {'name': 'Price', 'label': 'Fixed Ticket Price', 'type': 'number'}
         ]
         
         dialog = CRUDDialog(self.root, "Add Event", fields)
@@ -1650,6 +2346,16 @@ class EventManagementApp:
             # Extract IDs from dropdown selections
             dialog.result['Venue_id'] = int(dialog.result['Venue_id'].split(' - ')[0])
             dialog.result['Organizer_id'] = int(dialog.result['Organizer_id'].split(' - ')[0])
+            
+            # Validate price
+            try:
+                price = float(dialog.result['Price'])
+                if price <= 0:
+                    messagebox.showerror("Error", "Ticket price must be greater than zero!")
+                    return
+            except (ValueError, KeyError):
+                messagebox.showerror("Error", "Invalid ticket price!")
+                return
             
             # Add to database
             if self.db.add_event(dialog.result):
@@ -1686,7 +2392,8 @@ class EventManagementApp:
             {'name': 'Date', 'label': 'Date (YYYY-MM-DD)', 'type': 'date'},
             {'name': 'Time', 'label': 'Time (HH:MM:SS)', 'type': 'time'},
             {'name': 'Venue_id', 'label': 'Venue', 'type': 'dropdown', 'values': venue_options},
-            {'name': 'Organizer_id', 'label': 'Organizer', 'type': 'dropdown', 'values': organizer_options}
+            {'name': 'Organizer_id', 'label': 'Organizer', 'type': 'dropdown', 'values': organizer_options},
+            {'name': 'Price', 'label': 'Fixed Ticket Price', 'type': 'number'}
         ]
         
         # Prepare event data for dialog
@@ -1695,6 +2402,9 @@ class EventManagementApp:
                                  next((v['Name'] for v in self.db.venues if v['Venue_id'] == event['Venue_id']), "")
         event_data['Organizer_id'] = f"{event['Organizer_id']} - " + \
                                      next((o['Name'] for o in self.db.organizers if o['Organizer_id'] == event['Organizer_id']), "")
+        # Set default price if not exists
+        if 'Price' not in event_data:
+            event_data['Price'] = 0.00
         
         dialog = CRUDDialog(self.root, "Edit Event", fields, event_data)
         self.root.wait_window(dialog)
